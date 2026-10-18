@@ -29,27 +29,28 @@ access.
 3. When the token expires, generate a new one the same way and update this
    secret. Never paste the token anywhere else.
 
-## 3. Maintain allowed-users.txt
+## 3. Approving signers
 
-`allowed-users.txt` at the repo root lists the GitHub usernames that get
-invited automatically after signing. One username per line, no `@` needed,
-case doesn't matter, and lines starting with `#` are ignored.
+Nobody is invited unless you approve them, in one of two ways:
 
-- **Before someone signs:** add their username, commit to `main` (through a
-  pull request, see step 4), and they'll be invited as soon as they sign.
-- **If someone signs and isn't on the list:** their issue is labelled
-  `signed-pending-approval` and you are @mentioned. To approve, add them to
-  `allowed-users.txt`, then open the workflow run linked from the issue
-  (Actions tab → *NDA signature*) and click **Re-run all jobs**. To refuse,
-  close the issue.
-- To remove someone's access later, remove them from the list **and** remove
-  them under `beadyranga/coachbase` → Settings → Collaborators. Removing them
-  from the list alone doesn't revoke anything.
+- **After they sign (approve by label):** their issue is labelled
+  `signed-pending-approval` and you are @mentioned. To approve, open the issue
+  and add the `approved` label (Labels, on the right). The invitation is sent
+  within a minute. To refuse, close the issue. Only a label added by
+  @beadyranga counts.
+- **Before they sign (allowed-users.txt):** add their GitHub username to
+  `allowed-users.txt` at the repo root and commit it to `main` (through a pull
+  request, see step 4). They'll be invited as soon as they sign. One username
+  per line, no `@` needed, case doesn't matter, and lines starting with `#`
+  are ignored. This repo is public, so the list is visible to anyone.
 
-This repo is public, so the list is visible to anyone.
+To remove someone's access later, remove them under `beadyranga/coachbase` →
+Settings → Collaborators (and from `allowed-users.txt` if they're on it).
+Neither the label nor the list revokes anything by itself.
 
-Re-running the workflow is always safe. It skips people who are already
-collaborators or already invited, and doesn't post duplicate comments.
+Re-running the workflow (Actions tab → *NDA signature* → **Re-run all jobs**)
+is always safe. It skips people who are already collaborators or already
+invited, and doesn't post duplicate comments.
 
 ## 4. Protect main
 
@@ -88,11 +89,12 @@ Approval for running fork pull request workflows from contributors**, choose
 
 ## Onboarding someone
 
-1. Add their GitHub username to `allowed-users.txt` (or approve them after
-   they sign, see step 3).
-2. Send them the link: https://github.com/beadyranga/coachbase-onboarding
-3. They read the NDA and submit the **Sign the CoachBase NDA** form.
-4. The workflow checks the signature, invites them to `beadyranga/coachbase`
-   with write access, comments on the issue and locks it.
+1. Send them the link: https://github.com/beadyranga/coachbase-onboarding
+2. They read the NDA and submit the **Sign the CoachBase NDA** form.
+3. The workflow checks the signature and @mentions you. Add the `approved`
+   label to their issue (or add them to `allowed-users.txt` beforehand to
+   skip this step).
+4. The workflow invites them to `beadyranga/coachbase` with write access,
+   comments on the issue and locks it.
 5. They accept the invitation from their email or
    https://github.com/beadyranga/coachbase/invitations.

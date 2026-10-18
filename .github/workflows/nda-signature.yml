@@ -3,7 +3,8 @@ name: NDA signature
 # Only issue events. Never add pull_request or pull_request_target here.
 on:
   issues:
-    types: [opened]
+    # labeled: the owner approves a signer by adding the "approved" label.
+    types: [opened, labeled]
 
 permissions:
   issues: write
@@ -19,8 +20,12 @@ env:
 
 jobs:
   check:
-    # Runs on issues from the signing form (by label, or by title if the label doesn't exist yet).
-    if: contains(github.event.issue.labels.*.name, 'nda-request') || startsWith(github.event.issue.title, 'NDA signature')
+    # Runs on issues from the signing form (by label, or by title if the label doesn't exist yet),
+    # when they're opened, or when the owner adds the "approved" label.
+    if: >-
+      (contains(github.event.issue.labels.*.name, 'nda-request') || startsWith(github.event.issue.title, 'NDA signature'))
+      && (github.event.action == 'opened'
+          || (github.event.action == 'labeled' && github.event.label.name == 'approved' && github.event.sender.login == 'beadyranga'))
     runs-on: ubuntu-latest
     steps:
       - name: Check the signature and the allow list
@@ -82,11 +87,15 @@ jobs:
               if (e.status !== 404) throw e;
             }
 
-            if (!allowed.includes(login.toLowerCase())) {
+            const approvedByOwner = context.payload.action === 'labeled'
+              && context.payload.label.name === 'approved'
+              && context.payload.sender.login.toLowerCase() === process.env.OWNER_USERNAME.toLowerCase();
+
+            if (!allowed.includes(login.toLowerCase()) && !approvedByOwner) {
               await github.rest.issues.addLabels({ ...base, labels: ['signed-pending-approval'] });
               await commentOnce('pending',
                 `Thanks @${login}, your signature is recorded. The owner will review it before you get access.\n\n` +
-                `@${process.env.OWNER_USERNAME} @${login} is not in \`allowed-users.txt\`. To approve, add them to it and re-run this workflow.`);
+                `@${process.env.OWNER_USERNAME} @${login} is not in \`allowed-users.txt\`. To approve, add the \`approved\` label to this issue. To refuse, close it.`);
               core.setOutput('status', 'pending');
               return;
             }
