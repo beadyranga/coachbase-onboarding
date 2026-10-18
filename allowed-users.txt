@@ -1,0 +1,2 @@
+# GitHub usernames allowed to be invited to beadyranga/coachbase automatically
+# after signing the NDA. One per line, case-insensitive. Lines starting with # are ignored.

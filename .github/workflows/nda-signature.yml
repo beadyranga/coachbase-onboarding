@@ -1,11 +1,21 @@
 name: NDA signature
 
+# Only issue events. Never add pull_request or pull_request_target here.
 on:
   issues:
     types: [opened]
 
 permissions:
   issues: write
+  contents: read
+
+# One run at a time per issue, so a re-run can't race the original.
+concurrency:
+  group: nda-signature-${{ github.event.issue.number }}
+
+env:
+  OWNER_USERNAME: beadyranga
+  PRIVATE_REPO: coachbase
 
 jobs:
   check:
@@ -13,11 +23,9 @@ jobs:
     if: contains(github.event.issue.labels.*.name, 'nda-request') || startsWith(github.event.issue.title, 'NDA signature')
     runs-on: ubuntu-latest
     steps:
-      - name: Check the signature and notify the owner
-        uses: actions/github-script@v7
-        env:
-          # >>> REPLACE with your GitHub username (no @), e.g. 'ranga' <<<
-          OWNER_USERNAME: 'YOUR-GITHUB-USERNAME'
+      - name: Check the signature and the allow list
+        id: check
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             const issue = context.payload.issue;
@@ -30,29 +38,130 @@ jobs:
             const user = field('GitHub username').replace(/^@/, '');
             const date = field('Date');
             const accepted = /- \[x\] I have read the CoachBase NDA/i.test(body);
-
-            const problems = [];
-            if (!accepted) problems.push('the acceptance box is not ticked');
-            if (!name || name === '_No response_') problems.push('the full legal name is missing');
-            if (user.toLowerCase() !== issue.user.login.toLowerCase())
-              problems.push(`the GitHub username "${user}" does not match the account that opened this issue (${issue.user.login})`);
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) problems.push('the date is not in YYYY-MM-DD format');
+            const login = issue.user.login;
 
             const base = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number };
+            // Hidden markers stop a re-run from posting the same comment twice.
+            const comments = await github.paginate(github.rest.issues.listComments, base);
+            const commentOnce = async (marker, text) => {
+              if (comments.some(c => (c.body || '').includes(`<!-- nda-bot:${marker} -->`))) return;
+              await github.rest.issues.createComment({ ...base, body: `<!-- nda-bot:${marker} -->\n${text}` });
+            };
+
+            const problems = [];
+            if (issue.user.type !== 'User') problems.push('it was not opened by a personal GitHub account');
+            if (!accepted) problems.push('the acceptance box is not ticked');
+            if (!name || name === '_No response_') problems.push('the full legal name is missing');
+            if (user.toLowerCase() !== login.toLowerCase())
+              problems.push(`the GitHub username "${user}" does not match the account that opened this issue (${login})`);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) problems.push('the date is not in YYYY-MM-DD format');
+
             if (problems.length) {
-              await github.rest.issues.createComment({ ...base,
-                body: `This signature can't be accepted yet because ${problems.join(', and ')}. Please close this issue and submit the form again.` });
+              await commentOnce('invalid',
+                `This signature can't be accepted yet because ${problems.join(', and ')}. Please close this issue and submit the form again.`);
               await github.rest.issues.addLabels({ ...base, labels: ['nda-invalid'] });
+              core.setOutput('status', 'invalid');
               return;
             }
 
-            await github.rest.issues.addLabels({ ...base, labels: ['nda-signed'] });
-            await github.rest.issues.createComment({ ...base,
-              body: [
-                `Signed by **${name}** (@${issue.user.login}) on ${date}, for NDA Version 1.`,
-                `Recorded at ${new Date().toISOString()} from issue author account ID ${issue.user.id}.`,
-                '',
-                `@${process.env.OWNER_USERNAME} this person has signed. Invite @${issue.user.login} to the private CoachBase repository, then close this issue.`
-              ].join('\n') });
+            await github.rest.issues.addLabels({ ...base, labels: ['signed'] });
+            await commentOnce('signed', [
+              `Signed by **${name}** (@${login}) on ${date}, for NDA Version 1.`,
+              `Recorded at ${new Date().toISOString()} from issue author account ID ${issue.user.id}.`
+            ].join('\n'));
+
+            // Read the allow list from the default branch as it is now, so re-runs see later additions.
+            let allowed = [];
+            try {
+              const { data } = await github.rest.repos.getContent({
+                owner: context.repo.owner, repo: context.repo.repo,
+                path: 'allowed-users.txt', ref: context.payload.repository.default_branch });
+              allowed = Buffer.from(data.content, 'base64').toString('utf8')
+                .split(/\r?\n/).map(l => l.replace(/#.*/, '').trim().replace(/^@/, '').toLowerCase()).filter(Boolean);
+            } catch (e) {
+              if (e.status !== 404) throw e;
+            }
+
+            if (!allowed.includes(login.toLowerCase())) {
+              await github.rest.issues.addLabels({ ...base, labels: ['signed-pending-approval'] });
+              await commentOnce('pending',
+                `Thanks @${login}, your signature is recorded. The owner will review it before you get access.\n\n` +
+                `@${process.env.OWNER_USERNAME} @${login} is not in \`allowed-users.txt\`. To approve, add them to it and re-run this workflow.`);
+              core.setOutput('status', 'pending');
+              return;
+            }
+
+            core.setOutput('status', 'approved');
+            core.setOutput('login', login);
+
+      - name: Invite the signer to the private repo
+        id: invite
+        if: steps.check.outputs.status == 'approved'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          SIGNER: ${{ steps.check.outputs.login }}
+        with:
+          # Fine-grained PAT scoped only to beadyranga/coachbase. Only this step can use it.
+          github-token: ${{ secrets.INVITE_TOKEN }}
+          script: |
+            const owner = process.env.OWNER_USERNAME;
+            const repo = process.env.PRIVATE_REPO;
+            const username = process.env.SIGNER;
+            if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(username))
+              throw new Error('Unexpected username format');
+
+            try {
+              await github.rest.repos.checkCollaborator({ owner, repo, username });
+              core.setOutput('result', 'already-collaborator');
+              return;
+            } catch (e) {
+              if (e.status !== 404) throw e;
+            }
+
+            const invites = await github.paginate(github.rest.repos.listInvitations, { owner, repo });
+            if (invites.some(i => i.invitee && i.invitee.login.toLowerCase() === username.toLowerCase())) {
+              core.setOutput('result', 'already-invited');
+              return;
+            }
+
+            await github.rest.repos.addCollaborator({ owner, repo, username, permission: 'push' });
+            core.setOutput('result', 'invited');
+
+      - name: Record the invitation and lock the issue
+        if: steps.invite.outcome == 'success'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          RESULT: ${{ steps.invite.outputs.result }}
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const base = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number };
+            const marker = '<!-- nda-bot:invited -->';
+            const message = {
+              'invited': `An invitation to the private CoachBase repository has been sent to @${issue.user.login}. Accept it from your email or https://github.com/${process.env.OWNER_USERNAME}/${process.env.PRIVATE_REPO}/invitations.`,
+              'already-invited': `@${issue.user.login} already has a pending invitation to the private CoachBase repository. Accept it from your email or https://github.com/${process.env.OWNER_USERNAME}/${process.env.PRIVATE_REPO}/invitations.`,
+              'already-collaborator': `@${issue.user.login} already has access to the private CoachBase repository.`
+            }[process.env.RESULT];
+
+            await github.rest.issues.addLabels({ ...base, labels: ['signed', 'invited'] });
+            try {
+              await github.rest.issues.removeLabel({ ...base, name: 'signed-pending-approval' });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, base);
+            if (!comments.some(c => (c.body || '').includes(marker)))
+              await github.rest.issues.createComment({ ...base, body: `${marker}\n${message}` });
+
             // Lock so the signature record can't be edited by further comments.
-            await github.rest.issues.lock({ ...base, lock_reason: 'resolved' });
+            const { data: current } = await github.rest.issues.get(base);
+            if (!current.locked) await github.rest.issues.lock({ ...base, lock_reason: 'resolved' });
+
+      - name: Tell the owner if the invitation failed
+        if: failure() && steps.check.outputs.status == 'approved'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.payload.issue.number,
+              body: `@${process.env.OWNER_USERNAME} the signature is valid but the invitation could not be sent automatically. Check the workflow run logs and the INVITE_TOKEN secret.` });

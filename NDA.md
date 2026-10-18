@@ -1,7 +1,7 @@
 # CoachBase NDA and Contributor Agreement (Version 1)
 
 
-This agreement is between **[Ranga Amesh Wijekoon]**, the CEO of CoachBase (the
+This agreement is between **Ranga Amesh Wijekoon**, the CEO of CoachBase (the
 "Owner"), and **you**, any person who writes, edits, reviews or submits code
 or other material to the CoachBase repository (a "Contributor").
 
