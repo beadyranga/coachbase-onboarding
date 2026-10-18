@@ -1,0 +1,39 @@
+name: Sign the CoachBase NDA
+description: Sign the CoachBase NDA and Contributor Agreement to request access to the CoachBase code.
+title: "NDA signature: "
+labels: ["nda-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read the [CoachBase NDA and Contributor Agreement](../blob/main/NDA.md) in full before signing.
+        Submitting this form is your electronic signature.
+  - type: checkboxes
+    id: accept
+    attributes:
+      label: Agreement
+      options:
+        - label: I have read the CoachBase NDA and Contributor Agreement (Version 1) and I accept it. Everything I contribute belongs to the CoachBase CEO, and I will not use CoachBase code or information for any other purpose.
+          required: true
+  - type: input
+    id: legal_name
+    attributes:
+      label: Full legal name
+      placeholder: As on your government ID
+    validations:
+      required: true
+  - type: input
+    id: github_username
+    attributes:
+      label: GitHub username
+      description: Must be the account you are signed in with.
+      placeholder: octocat
+    validations:
+      required: true
+  - type: input
+    id: date
+    attributes:
+      label: Date
+      placeholder: YYYY-MM-DD
+    validations:
+      required: true
